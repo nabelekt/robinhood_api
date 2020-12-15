@@ -39,7 +39,7 @@ def write_to_json_file(data_to_write, output_file_path):
     print("Done.")
 
 
-def get_rh_stock_orders(tickers):
+def get_rh_stock_orders(symbols):
     
     rh_login()
     
@@ -60,21 +60,72 @@ def get_rh_stock_orders(tickers):
     
     #     print(f)
 
-    orders = [robin_stocks.orders.find_stock_orders(symbol=symbol) for symbol in tickers]
+    orders = []
+
+    for symbol in symbols:
+        order_set = robin_stocks.orders.find_stock_orders(symbol=symbol)
+        for order in order_set:
+            order['symbol'] = symbol
+        orders.append(order_set)
 
     # print_controller.enable_printing()
     
     return orders
 
 
-def get_rh_crypto_orders(tickers):
+def get_rh_all_crypto_orders():
     
     rh_login()
 
     orders = robin_stocks.orders.get_all_crypto_orders()
-    
-    print(orders)
+
     return orders
+
+
+def get_rh_crypto_orders(symbols=None):
+    
+    all_orders = get_rh_all_crypto_orders()
+    
+    if symbols is None:
+        wanted_orders = all_orders
+    
+    else:
+        order_dict = dict((symbol, []) for symbol in symbols)  # Create dictionary with each symbol as a key
+             
+        for order in all_orders:
+            symbol = get_crypto_order_symbol(order['currency_pair_id'])
+            order['symbol'] = symbol
+            try:
+                order_dict[symbol].append(order)  # Append order to dicionary corresponding with symbol
+            except KeyError:
+                pass  # Discard orders that don't corespond to one of our tickers
+
+
+        # Create list of lists from dictionary
+        wanted_orders = list(order_dict.values())
+    
+    return wanted_orders
+
+
+def get_crypto_order_symbol(currency_pair_id):
+
+    return robin_stocks.crypto.get_crypto_quote_from_id(currency_pair_id, 'symbol')
+
+
+def get_rh_crypto_order_info(order_id):
+
+  rh_login()
+
+  data = robin_stocks.orders.get_crypto_order_info(id)
+
+
+def get_rh_crypto_positions():
+    
+    rh_login()
+
+    positions = robin_stocks.crypto.get_crypto_positions()
+    
+    return positions
 
 
 if __name__ == "__main__":

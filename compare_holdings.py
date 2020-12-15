@@ -1,6 +1,6 @@
 RH_INPUT_FILE_PATH_STOCKS = "robinhood_stock_positions.json"
 RH_INPUT_FILE_PATH_CRYPTO = "robinhood_crypto_positions.json"
-BT_INPUT_FILE_PATH = "Investment Summary - Revised.csv"
+BT_INPUT_FILE_PATH = "Investment Summary 5.csv"
 # BT_FILE_PATH = "Investment Summary.csv"
 
 SHOW_CANCELED_AND_FAILED_ORDERS = False
@@ -112,31 +112,55 @@ def format_datetime_str(order_dt_str):
 def parse_and_print_rh_order_data(ticker, order_set):
     
     if order_set == []:
-        print(f'  {ticker:7s}',    end="  ")
+        print(f'  {ticker:7s}', end="  ")
         print(f"No Robinhood order data for ticker '{ticker}'.")
         return False
+    
     else:
         for order_idx, order in enumerate(order_set):
+            if ticker != order['symbol']:
+                print("ERROR: symbol mismatch", sys.exc_info()[0])
+                raise
+
             for execution in order['executions']:
+                
                 if ((order['state'] == 'filled') or (SHOW_CANCELED_AND_FAILED_ORDERS)):
                     num_executions = len(order['executions'])
-                    print(f'  {ticker:7s}',    end="  ")
-                    print(order['state'],    end="  ")
+
+                    print(f'  {ticker:7s}', end="  ")
+                    print(order['state'], end="  ")
+
                     side = order['side']
-                    print(f'{side:4s}',      end="  ")
+                    print(f'{side:4s}', end="  ")
+
                     if (order['state'] != 'filled'):
                         quantity = float(order['quantity'])
                     else:
                         quantity = float(execution['quantity'])
-                    print(f'{quantity:11,f}', end="  ")
+                    if order['type'] == 'stock':
+                        print(f'{quantity:11,f}', end="  ")
+                    else:
+                        print(f'{quantity:17,.10f}', end="  ")
+
                     if order['state'] == 'filled':
-                        amount = float(order['executed_notional']['amount'])
+
+                        if 'executed_notional' in order:  # Stock order data uses 'executed_notional: amount'
+                            amount = float(order['executed_notional']['amount'])
+                        else:  # Crypto order data uses 'rounded_executed_notional'
+                            amount = float(order['rounded_executed_notional'])
                         print(f'{amount:8,.2f}', end="  ")
-                        price =  float(execution['price'])
-                        print(f'{price:9.3f}',   end="  ")
+                        
+                        if 'price' in execution:  # Stock order data puts price data in each execution
+                            price =  float(execution['price'])
+                        else:  # Crypto order data puts price with order data
+                            price = float(order['price'])
+                        print(f'{price:9,.3f}', end="  ")
+                        
                         datetime_str = format_datetime_str(execution['timestamp'])
-                        print(datetime_str,      end="  ")
-                        print(num_executions,    end="  ")
+                        print(datetime_str, end="  ")
+                        
+                        print(num_executions, end="  ")
+                    
                     if num_executions > 1:
                         print(" ** part of an order with multiple executions", end="")
         
@@ -171,6 +195,15 @@ def iterate_through_rh_orders(tickers, orders):
         print("There was no order data.")
 
 
+def cleanup_bt_crypto_tickers(bt_crypto_tickers):
+
+    for idx, ticker in enumerate(bt_crypto_tickers):
+        if ticker.endswith('USDT'):
+            bt_crypto_tickers[idx] = ticker[:-1]
+
+    return bt_crypto_tickers
+
+
 if __name__ == "__main__":
 
     df_bt = process_banktivity_data()
@@ -189,9 +222,11 @@ if __name__ == "__main__":
     tickers_missing_from_bt_crypto = []
     if stocks_are_missing_from_bt:
         tickers_missing_from_bt_stock = missing_from_bt_df[missing_from_bt_df['type'] == 'stock'].index.tolist()
-        # tickers_missing_from_bt_stock = ['AAPL', 'TSLA', 'SPCE']  # For testing, give tickers here
     if cryptos_are_missing_from_bt:
         tickers_missing_from_bt_crypto = missing_from_bt_df[missing_from_bt_df['type'] == 'crypto'].index.tolist()
+    # tickers_missing_from_bt_stock  = ['AAPL', 'TSLA', 'SPCE']  # For testing, give tickers here
+    # tickers_missing_from_bt_crypto = ['BTCUSD', 'TEST', 'ETHUSD', 'LTCUSD']  # For testing, give tickers here
+
     tickers_missing_from_bt = tickers_missing_from_bt_stock + tickers_missing_from_bt_crypto
 
     tickers_missing_from_rh = missing_from_rh_df.index.tolist()
@@ -214,12 +249,15 @@ if __name__ == "__main__":
         
         if tickers_missing_from_bt_crypto:
             print("\nGetting missing crypto order info... ")
+            tickers_missing_from_bt_crypto = cleanup_bt_crypto_tickers(tickers_missing_from_bt_crypto)
             rh_crypto_orders = rh_fetch.get_rh_crypto_orders(tickers_missing_from_bt_crypto)
-            print("\nRobinhood order data for crypto tickers missing from Banktivity:")
-            ###iterate_through_rh_orders(tickers_missing_from_bt, rh_stock_orders)
+            print("Robinhood order data for crypto tickers missing from Banktivity:")
+            iterate_through_rh_orders(tickers_missing_from_bt_crypto, rh_crypto_orders)
         else:
             print("\nNo Robinhood crypto tickers missing from Banktivity.")
-                
+    
+    else:
+        print("No Robinhood data is missing from Banktivity.")
 
 
     print("\n----------------------------------------------------------------------\n")
@@ -229,8 +267,10 @@ if __name__ == "__main__":
         print("Missing from Robinhood:\n")
         print(missing_from_rh_df)
 
+        # TODO: print out Robinhood order data for missing tickers
+
     else:
-        print("\nNo Banktivity data missing from Robinhood.")
+        print("No Banktivity data is missing from Robinhood.")
 
     print("\n----------------------------------------------------------------------\n")
 
