@@ -1,6 +1,4 @@
-RH_INPUT_FILE_PATH_STOCKS = "robinhood_stock_positions.json"
-RH_INPUT_FILE_PATH_CRYPTO = "robinhood_crypto_positions.json"
-BT_INPUT_FILE_PATH = "Investment Summary 5.csv"
+BT_DATA_JSON_FILE_PATH = "Investment Summary 5.csv"
 # BT_FILE_PATH = "Investment Summary.csv"
 
 SHOW_CANCELED_AND_FAILED_ORDERS = False
@@ -17,11 +15,12 @@ import dateutil.parser
 import json
 import print_control
 from contextlib import redirect_stdout
+import os
 
 
-def process_banktivity_data():
+def process_banktivity_positions_data():
 
-    input_file  = open(BT_INPUT_FILE_PATH, "r")
+    input_file  = open(BT_DATA_JSON_FILE_PATH, "r")
     file_header = input_file.readlines()[7]
     input_file.seek(0)
     file_data   = input_file.readlines()[9:]
@@ -29,7 +28,7 @@ def process_banktivity_data():
 
     file_data   = ''.join(file_data)
     data_str    = file_header + file_data
-    data_str = io.StringIO(data_str)
+    data_str    = io.StringIO(data_str)
 
     pd.options.display.width = 0
     pd.set_option('display.max_columns', None)
@@ -42,39 +41,8 @@ def process_banktivity_data():
 
     df['type'] = '?'  # Unknown if security is stock or cryptocurrency
 
-    df = prep_stock_df(df)
+    df = rh_process.prep_stock_df_for_compare(df)
 
-    return df
-
-
-def process_robinhood_data():
-
-    stock_positions_dicts  = rh_process.get_dicts_from_json_file(RH_INPUT_FILE_PATH_STOCKS)
-    stock_positions_df     = rh_process.process_stock_positions_data(stock_positions_dicts)
-    stock_positions_df     = prep_stock_df(stock_positions_df)
-
-    crypto_positions_dicts = rh_process.get_dicts_from_json_file(RH_INPUT_FILE_PATH_CRYPTO)
-    crypto_positions_df    = rh_process.process_crypto_positions_data(crypto_positions_dicts)
-
-    positions_df = pd.concat([stock_positions_df, crypto_positions_df])
-
-    return positions_df
-
-
-def prep_stock_df(df):
-
-    df.drop(df.columns.difference(['name', 'quantity', 'equity', 'type']), 1, inplace=True)
-    df = sort_by(df, 'ticker')
-    df = df[['name', 'quantity', 'equity', 'type']]  # Rearrange columns
-    df['equity'] = df['equity'].replace('[\$,]', '', regex=True).astype(float)  # Convert currency strings to float values
-
-    return df
-
-
-def sort_by(df, column_label):
-    
-    df.sort_values(column_label, inplace=True)
-    
     return df
 
 
@@ -95,8 +63,8 @@ def compare_holdings_data(df_rh, df_bt):
     missing_from_rh = missing_from_rh.loc[(missing_from_rh['quantity'] != 0) | (missing_from_rh['equity'] != 0)]
     missing_from_bt = missing_from_bt.loc[(missing_from_bt['quantity'] != 0) | (missing_from_bt['equity'] != 0)]
 
-    missing_from_rh = sort_by(missing_from_rh, 'name')
-    missing_from_bt = sort_by(missing_from_bt, 'name')
+    missing_from_rh = rh_process.sort_by(missing_from_rh, 'name')
+    missing_from_bt = rh_process.sort_by(missing_from_bt, 'name')
 
     return [missing_from_rh, missing_from_bt]
 
@@ -206,8 +174,23 @@ def cleanup_bt_crypto_tickers(bt_crypto_tickers):
 
 if __name__ == "__main__":
 
-    df_bt = process_banktivity_data()
-    df_rh = process_robinhood_data()
+    print()
+
+    rh_fetch.login()
+
+    # Save Robinhood position data to files so that it only needs to be fetched once if script is run multiple times
+    files_exist = os.path.exists(rh_process.RH_DATA_JSON_FILE_PATH_STOCKS) & os.path.exists(rh_process.RH_DATA_JSON_FILE_PATH_CRYPTO)
+    fetch_new_info_input = 'n'
+    if files_exist:
+        fetch_new_info_input = input("Update data from Robinhood? Enter 'y' or 'n': ")
+    if ((not files_exist) or (fetch_new_info_input == 'y')):
+        if (fetch_new_info_input == 'y'):
+            print()
+        rh_process.write_stock_positions_to_json_file(rh_process.RH_DATA_JSON_FILE_PATH_STOCKS)
+        rh_process.write_crypto_positions_to_json_file(rh_process.RH_DATA_JSON_FILE_PATH_CRYPTO)
+
+    df_bt = process_banktivity_positions_data()
+    df_rh = rh_process.process_positions_data()
 
     [missing_from_rh_df, missing_from_bt_df] = compare_holdings_data(df_rh, df_bt)
     

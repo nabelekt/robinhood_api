@@ -1,5 +1,3 @@
-OUTPUT_FILE_PATH_STOCKS = "robinhood_stock_positions.json"
-OUTPUT_FILE_PATH_CRYPTO = "robinhood_crypto_positions.json"
 
 
 import pyotp
@@ -10,7 +8,7 @@ import functools
 print = functools.partial(print, flush=True)  # Prevent print statements from buffering till end of execution
 
 
-def rh_login():
+def login():
     totp  = pyotp.TOTP(rh_creds.TOTP_code).now()
     login = robin_stocks.login(rh_creds.username, rh_creds.password, mfa_code=totp)
 
@@ -31,17 +29,9 @@ def get_crypto_positions_dicts():
     return crypto_positions
 
 
-def write_to_json_file(data_to_write, output_file_path):
-    print(f"Writing to {output_file_path} file... ", end="")
-    output_file = open(output_file_path, "w")
-    output_file.write(json.dumps(data_to_write))
-    output_file.close()
-    print("Done.")
-
-
-def get_rh_stock_orders(symbols):
+def get_stock_orders(symbols):
     
-    rh_login()
+    login()
     
     # print_controller = print_control.Controller()
     # print_controller.disable_printing()
@@ -73,18 +63,18 @@ def get_rh_stock_orders(symbols):
     return orders
 
 
-def get_rh_all_crypto_orders():
+def get_all_crypto_orders():
     
-    rh_login()
+    login()
 
     orders = robin_stocks.orders.get_all_crypto_orders()
 
     return orders
 
 
-def get_rh_crypto_orders(symbols=None):
+def get_crypto_orders(symbols=None):
     
-    all_orders = get_rh_all_crypto_orders()
+    all_orders = get_all_crypto_orders()
     
     if symbols is None:
         wanted_orders = all_orders
@@ -112,31 +102,17 @@ def get_crypto_order_symbol(currency_pair_id):
     return robin_stocks.crypto.get_crypto_quote_from_id(currency_pair_id, 'symbol')
 
 
-def get_rh_crypto_order_info(order_id):
+def get_crypto_order_info(order_id):
 
-  rh_login()
+  login()
 
   data = robin_stocks.orders.get_crypto_order_info(id)
 
 
-def get_rh_crypto_positions():
+def get_crypto_positions():
     
-    rh_login()
+    login()
 
     positions = robin_stocks.crypto.get_crypto_positions()
     
     return positions
-
-
-if __name__ == "__main__":
-
-    print()
-
-    rh_login()
-    stock_positions = get_stock_positions_dicts()
-    crypto_positions = get_crypto_positions_dicts()
-
-    write_to_json_file(stock_positions,  OUTPUT_FILE_PATH_STOCKS)
-    write_to_json_file(crypto_positions, OUTPUT_FILE_PATH_CRYPTO)
-
-    print("\nDone. Exiting.\n")
