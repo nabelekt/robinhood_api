@@ -1,13 +1,8 @@
-BT_DATA_JSON_FILE_PATH = "Investment Summary 5.csv"
-# BT_FILE_PATH = "Investment Summary.csv"
-
 SHOW_CANCELED_AND_FAILED_ORDERS = False
 
 
 import pandas as pd
 import io
-import robinhood_process as rh_process
-import robinhood_fetch   as rh_fetch
 import robin_stocks
 import pyotp
 from datetime import datetime as dt
@@ -16,22 +11,53 @@ import json
 import print_control
 from contextlib import redirect_stdout
 import os
+import argparse
+import sys
+import time
+
+# Local modules and files:
+import robinhood_process as rh_process
+import robinhood_fetch   as rh_fetch
 
 
-def process_banktivity_positions_data():
+def parse_and_check_input():
 
-    input_file  = open(BT_DATA_JSON_FILE_PATH, "r")
-    file_header = input_file.readlines()[7]
-    input_file.seek(0)
-    file_data   = input_file.readlines()[9:]
+    parser = argparse.ArgumentParser(description='Reconcile Robinhood positions with what Banktivity is tracking')
+    parser.add_argument('bt_csv_file_path', help="Path to CSV file exported from banktivity with position information.")
+    parser.add_argument('--compare_equity', action='store_true')
+    parser.add_argument('--equity_diff', help="If compare_equity is set, then RH orders where equity differences " \
+                        "are greater than equity_diff will be displayed.")
+    args = parser.parse_args()
+
+    if not os.path.isfile(args.bt_csv_file_path):
+        sys.exit(f"Input file '{args.bt_csv_file_path}' does not exist.\nExiting.\n")
+    
+    if args.compare_equity and not args.equity_diff:
+        sys.exit(f"When '--compare_equity' is set, an '--equity_diff' argument must be provided.\nExiting.\n")
+
+    if args.compare_equity:
+        try:
+            args.equity_diff = float(args.equity_diff)
+        except ValueError:
+            sys.exit(f"--equity_diff argument '{args.equity_diff}' is invalid. A floating-point value must be provided.\nExiting.\n")
+
+    return args
+
+
+def process_banktivity_positions_data(bt_holdings_csv_file_path):
+
+    # Read in file data exported from Banktivity
+    input_file  = open(bt_holdings_csv_file_path, "r")
+    input_lines = input_file.readlines()
     input_file.close()
 
+    # Find where securities information starts and get data from there
+    securities_line_idx = input_lines.index('Securities\n')
+    file_header = input_lines[securities_line_idx+1]
+    file_data   = input_lines[securities_line_idx+3:]
     file_data   = ''.join(file_data)
     data_str    = file_header + file_data
     data_str    = io.StringIO(data_str)
-
-    pd.options.display.width = 0
-    pd.set_option('display.max_columns', None)
 
     df = pd.read_csv(data_str, sep=",")
 
@@ -40,8 +66,11 @@ def process_banktivity_positions_data():
     df.rename(columns={"Name": "name", "Close Shares": "quantity", "Close Value": "equity"}, inplace=True)
 
     df['type'] = '?'  # Unknown if security is stock or cryptocurrency
+    df['quote'] =  '?'  # Datatypes need to be corrected before this can be set
 
-    df = rh_process.prep_stock_df_for_compare(df)
+    df = rh_process.prep_stock_positions_df_for_compare(df)
+
+    df['quote'] = df['equity'] / df['quantity']
 
     return df
 
@@ -81,14 +110,17 @@ def parse_and_print_rh_order_data(ticker, order_set):
     
     if order_set == []:
         print(f'  {ticker:7s}', end="  ")
-        print(f"No Robinhood order data for ticker '{ticker}'.")
+        now = int(time.time())
+        five_years_ago = int(now - (5*365.25*24*60*60))
+        print(f"No Robinhood order data for '{ticker}'. This may be due to a merger, stock split, etc. See 5 year history at " \
+              f"https://finance.yahoo.com/quote/{ticker}/history?period1={five_years_ago}&period2={now}")
         return False
     
     else:
         for order_idx, order in enumerate(order_set):
             if ticker != order['symbol']:
-                print("ERROR: symbol mismatch", sys.exc_info()[0])
-                raise
+                print(f"ERROR: symbol mismatch: {ticker} != {order['symbol']}, ", sys.exc_info()[0])
+                raise  # Raise to help debug
 
             for execution in order['executions']:
                 
@@ -172,10 +204,49 @@ def cleanup_bt_crypto_tickers(bt_crypto_tickers):
     return bt_crypto_tickers
 
 
-if __name__ == "__main__":
+def compare_equity(df_bt, df_rh):
+
+    equity_tuples = [(df_rh['type'][ticker], ticker, df_rh['name'][ticker], df_bt['equity'][ticker], df_rh['equity'][ticker],
+                         df_bt['quote'][ticker], df_rh['quote'][ticker]) for ticker in df_rh.index.tolist()]
+    df = pd.DataFrame(equity_tuples, columns=['type', 'ticker', 'name', 'bt_equity', 'rh_equity', 'bt_quote', 'rh_quote'])
+
+    df['equity_difference'] = df['bt_equity'] - df['rh_equity']
+
+    df = df.reindex(df.equity_difference.abs().sort_values(ascending=False).index)  # Sort by absolute value
+    df = df[df.equity_difference.abs() > 0]  # Get rid of rows with no difference
+
+    print("Equity differences may be due to after-hours trading. Robinhood prices may be udpated through after-hours "
+          "trading while Banktivity prices may only be updated through market close. 'rh_quote' below, however, may "
+          "only be updated through market close.")
+    print("Equity differences:\n")
+    print(df.to_string(index=False))
+
+    return df
+
+
+def get_equity_diff_tickers(equity_diff_df, equity_diff):
+
+    equity_diff_df = equity_diff_df[equity_diff_df['equity_difference'].abs() >= equity_diff]
+    equity_diff_df = rh_process.sort_by(equity_diff_df, 'name')
+
+    equity_diff_stock_tickers  = equity_diff_df.loc[equity_diff_df['type'] == 'stock',  'ticker'].tolist()
+    equity_diff_crypto_tickers = equity_diff_df.loc[equity_diff_df['type'] == 'crypto', 'ticker'].tolist()
+
+    return [equity_diff_stock_tickers, equity_diff_crypto_tickers]
+
+
+def main():
 
     print()
 
+    args = parse_and_check_input()
+
+    # Settings for dataframe printing
+    pd.options.display.width = 0
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.max_rows', None)
+
+    # Login to Robinhood
     rh_fetch.login()
 
     # Save Robinhood position data to files so that it only needs to be fetched once if script is run multiple times
@@ -189,8 +260,8 @@ if __name__ == "__main__":
         rh_process.write_stock_positions_to_json_file(rh_process.RH_DATA_JSON_FILE_PATH_STOCKS)
         rh_process.write_crypto_positions_to_json_file(rh_process.RH_DATA_JSON_FILE_PATH_CRYPTO)
 
-    df_bt = process_banktivity_positions_data()
-    df_rh = rh_process.process_positions_data()
+    df_bt = process_banktivity_positions_data(args.bt_csv_file_path)
+    df_rh = rh_process.process_positions_data(get_quotes=args.compare_equity)
 
     [missing_from_rh_df, missing_from_bt_df] = compare_holdings_data(df_rh, df_bt)
     
@@ -223,7 +294,7 @@ if __name__ == "__main__":
                 
         if tickers_missing_from_bt_stock:
             print("\nGetting missing stock order info... ")
-            rh_stock_orders  = rh_fetch.get_rh_stock_orders(tickers_missing_from_bt_stock)
+            rh_stock_orders  = rh_fetch.get_stock_orders(tickers_missing_from_bt_stock)
             print("\nRobinhood order data for stock tickers missing from Banktivity:")
             iterate_through_rh_orders(tickers_missing_from_bt, rh_stock_orders)
             print()
@@ -233,7 +304,7 @@ if __name__ == "__main__":
         if tickers_missing_from_bt_crypto:
             print("\nGetting missing crypto order info... ")
             tickers_missing_from_bt_crypto = cleanup_bt_crypto_tickers(tickers_missing_from_bt_crypto)
-            rh_crypto_orders = rh_fetch.get_rh_crypto_orders(tickers_missing_from_bt_crypto)
+            rh_crypto_orders = rh_fetch.get_crypto_orders(tickers_missing_from_bt_crypto)
             print("Robinhood order data for crypto tickers missing from Banktivity:")
             iterate_through_rh_orders(tickers_missing_from_bt_crypto, rh_crypto_orders)
         else:
@@ -256,5 +327,33 @@ if __name__ == "__main__":
         print("No Banktivity data is missing from Robinhood.")
 
     print("\n----------------------------------------------------------------------\n")
+
+    if args.compare_equity:
+
+        equity_diff_df = compare_equity(df_bt, df_rh)
+        [equity_diff_tickers_stock, equity_diff_tickers_crypto] = get_equity_diff_tickers(equity_diff_df, args.equity_diff)
+
+        if equity_diff_tickers_stock:        
+            print(f"\nGetting stock order info for stock tickers where absolute value equity differences are greater than or equal to ${args.equity_diff}... ")
+        rh_stock_orders  = rh_fetch.get_stock_orders(equity_diff_tickers_stock)
+
+        if equity_diff_tickers_crypto:
+            equity_diff_tickers_crypto = cleanup_bt_crypto_tickers(equity_diff_tickers_crypto)
+            print(f"\nGetting crypto order info for crypto tickers where absolute value equity differences are greater than or equal to ${args.equity_diff}... ")
+        rh_crypto_orders = rh_fetch.get_crypto_orders(equity_diff_tickers_crypto)
+
+        if equity_diff_tickers_stock or equity_diff_tickers_crypto:
+            print(f"\nRobinhood order data for securities where absolute value equity differences are greater than or equal to ${args.equity_diff}:\n")
+            iterate_through_rh_orders(equity_diff_tickers_stock+equity_diff_tickers_crypto, rh_stock_orders+rh_crypto_orders)
+
+        else:
+            print(f"\nNo securities have equity differences greater than or equal to ${args.equity_diff}.")
+
+        print("\n----------------------------------------------------------------------\n")
+
+
+if __name__ == "__main__":
+
+    main()
 
     print("Done. Exiting.\n")

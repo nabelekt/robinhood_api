@@ -2,20 +2,31 @@ RH_DATA_JSON_FILE_PATH_STOCKS = "robinhood_stock_positions.json"
 RH_DATA_JSON_FILE_PATH_CRYPTO = "robinhood_crypto_positions.json"
 
 
-import robinhood_fetch as rh_fetch
+import sys
+import robin_stocks
 import json
 import pandas as pd
 import functools
 print = functools.partial(print, flush=True)  # Prevent print statements from buffering till end of execution
 import argparse
 
+# Local modules and files:
+import robinhood_fetch as rh_fetch
 
-def process_stock_positions_data(stock_positions_dicts):
+
+def process_stock_positions_data(stock_positions_dicts, get_quotes=False):
   
     df = pd.DataFrame(stock_positions_dicts, index=None)
     df = df.transpose()
     
-    df['type'] = 'stock'
+    df['type']  = 'stock'
+    
+    if get_quotes:
+        print("\nGetting stock quotes from Robinhood. This may take a few minutes... ", end="")
+        df['quote'] = df.apply(lambda row: get_stock_quote(row), axis=1)
+        print("Done.")
+    else:
+        df['quote'] = '?'
 
     df.index.name = 'ticker'
 
@@ -24,7 +35,14 @@ def process_stock_positions_data(stock_positions_dicts):
     return df
 
 
-def process_crypto_positions_data(crypto_positions_dicts):
+def get_stock_quote(row):
+
+    quote = robin_stocks.stocks.get_stock_quote_by_symbol(row.name)['last_trade_price']
+    
+    return quote
+
+
+def process_crypto_positions_data(crypto_positions_dicts, get_quotes=False):
 
     df = pd.DataFrame(crypto_positions_dicts, index=None)
 
@@ -36,53 +54,108 @@ def process_crypto_positions_data(crypto_positions_dicts):
 
     # Setup columns
     df.drop(df.columns.difference(['quantity']), 1, inplace=True)
-    df['ticker'] = [symbol + 'USDT' for symbol in symbols]
-    df['name'] = names
-    df['equity'] = '?'
-    df['type'] = 'crypto'
+    df['name']     = names
+    df['type']     = 'crypto'
+    df['ticker']   = symbols  # Changed later, but this is used in get_crypto_quote() below
+    df = df[df['ticker'] != 'USD']  # Drop 'USD'/'USDUSDT' ticker from list of crypto positions
+    if get_quotes:
+        print("\nGetting crypto quotes from Robinhood... ", end="")
+        df['quote']    = df.apply(lambda row: get_crypto_quote(row), axis=1)  # Used in get_crypto_equity() below
+        print("Done.")
+        df['quote']    = df['quote'].astype('float')
+    else:
+        df['quote'] = '?'
+    df['quantity'] = df['quantity'].astype('float')
+    df['equity']   = df.apply(lambda row: get_crypto_equity(row), axis=1)
+    df['ticker']   = [symbol + 'USDT' for symbol in df['ticker']]
 
-    df = df[['ticker', 'name', 'quantity', 'equity', 'type']]  # Rearrange columns
-
+    df = df[['ticker', 'name', 'quantity', 'quote', 'equity', 'type']]  # Rearrange columns
     df.set_index('ticker', inplace=True)
     df.sort_values('name', inplace=True)
-    df.drop('USDUSDT', inplace=True)
 
     return df
 
 
-def process_positions_data(stock_positions_dicts=None, crypto_positions_dicts=None):
+def remove_USDT_from_crypto_ticker(row):
+
+  if row['type'] == 'crypto':
+      row['ticker'] = row['ticker'][:-4]  # Remove 'USDT'
+
+  return row
+
+
+def get_crypto_quote(row):
+
+    return robin_stocks.crypto.get_crypto_quote(row['ticker'], 'ask_price')
+
+
+def get_crypto_equity(row):
+
+    if row['quote'] != '?':
+        equity = row['quantity'] * row['quote']
+    else:
+        equity = '?'
+
+    return equity
+
+
+def process_stock_dividends_data(stock_dividends_dicts):
+  
+    df = pd.DataFrame(stock_dividends_dicts, index=None)
+
+    df = sort_by(df, 'paid_at')
+
+    return df
+
+
+def process_positions_data(stock_positions_dicts=None, crypto_positions_dicts=None, get_quotes=False):
 
     if stock_positions_dicts is None:
         stock_positions_dicts  = get_dicts_from_json_file(RH_DATA_JSON_FILE_PATH_STOCKS)
-    stock_positions_df = process_stock_positions_data(stock_positions_dicts)
-    stock_positions_df = prep_stock_df_for_compare(stock_positions_df)
+    stock_positions_df = process_stock_positions_data(stock_positions_dicts, get_quotes)
+    stock_positions_df = prep_stock_positions_df_for_compare(stock_positions_df)
 
     if crypto_positions_dicts is None:
         crypto_positions_dicts = get_dicts_from_json_file(RH_DATA_JSON_FILE_PATH_CRYPTO)
-    crypto_positions_df = process_crypto_positions_data(crypto_positions_dicts)
+    crypto_positions_df = process_crypto_positions_data(crypto_positions_dicts, get_quotes)
 
     positions_df = pd.concat([stock_positions_df, crypto_positions_df])
 
     return positions_df
 
 
-def prep_stock_df_for_compare(df):
+def prep_stock_positions_df_for_compare(df):
 
-    df.drop(df.columns.difference(['name', 'quantity', 'equity', 'type']), 1, inplace=True)
+    columns_to_keep_in_order = ['name', 'quantity', 'equity', 'quote', 'type']
+
+    df.drop(df.columns.difference(columns_to_keep_in_order), 1, inplace=True)
     df = sort_by(df, 'ticker')
-    df = df[['name', 'quantity', 'equity', 'type']]  # Rearrange columns
-    df['equity'] = df['equity'].replace('[\$,]', '', regex=True).astype(float)  # Convert currency strings to float values
+    df = df[columns_to_keep_in_order]  # Rearrange columns
+    df['equity'] = df['equity'].replace(r'[\$,]', '', regex=True).astype(float)  # Convert currency strings to float values
+    df['quantity'] = df['quantity'].astype(float)  # Convert strings to float values
 
     return df
 
 
-def prep_stock_df_for_output(df):
+def prep_stock_positions_df_for_output(df):
 
-    df.drop(df.columns.difference(['name', 'quantity', 'equity', 'percentage']), 1, inplace=True)
-    df = df[['name', 'quantity', 'equity', 'percentage']]  # Rearrange columns
+    columns_to_keep_in_order = ['name', 'quantity', 'equity', 'quote', 'percentage']
+
+    df.drop(df.columns.difference(columns_to_keep_in_order), 1, inplace=True)  # Drop unwanted columns
+    df = df[columns_to_keep_in_order]  # Rearrange columns
     df['percentage'] = df['percentage'].astype(float)  # Convert string values to float values
     df = sort_by(df, 'percentage', ascending=False)
-    df['equity'] = df['equity'].replace('[\$,]', '', regex=True).astype(float)  # Convert currency strings to float values
+    df['equity'] = df['equity'].replace(r'[\$,]', '', regex=True).astype(float)  # Convert currency strings to float values
+
+    return df
+
+
+def prep_stock_dividends_df_for_output(df):
+
+    columns_to_keep_in_order = ['paid_at', 'record_date', 'symbol', 'amount', 'position', 'rate', 'withholding', 'drip_enabled', 'nra_withholding']
+
+    df.drop(df.columns.difference(columns_to_keep_in_order), 1, inplace=True)  # Drop unwanted columns
+    df = df[columns_to_keep_in_order]  # Rearrange columns
 
     return df
 
@@ -90,9 +163,9 @@ def prep_stock_df_for_output(df):
 def sort_by(df, column_label, ascending=True):
     
     if ascending:
-        df.sort_values(column_label, inplace=True, ascending=True)
+        df = df.sort_values(column_label, inplace=False, ascending=True)
     else:
-        df.sort_values(column_label, inplace=True, ascending=False)
+        df = df.sort_values(column_label, inplace=False, ascending=False)
     
     return df
 
@@ -113,13 +186,22 @@ def write_stock_positions_to_csv_file(output_file_path):
 
     stock_positions_dicts = rh_fetch.get_stock_positions_dicts()
     stock_positions_df = process_stock_positions_data(stock_positions_dicts)
-    stock_positions_df = prep_stock_df_for_output(stock_positions_df)
+    stock_positions_df = prep_stock_positions_df_for_output(stock_positions_df)
 
     print(f"Writing to {output_file_path} file... ", end="")
-    stock_positions_df.to_csv(output_file_path)
+    stock_positions_df.to_csv(output_file_path, index=False)
     print("Done.")
 
-    # write_to_json_file(stock_positions,  output_file_path)
+
+def write_stock_dividends_to_csv_file(output_file_path):
+
+    stock_dividends_dicts = rh_fetch.get_stock_dividends_dicts()
+    stock_dividends_df = process_stock_dividends_data(stock_dividends_dicts)
+    stock_dividends_df = prep_stock_dividends_df_for_output(stock_dividends_df)
+
+    print(f"Writing to {output_file_path} file... ", end="")
+    stock_dividends_df.to_csv(output_file_path, index=False)
+    print("Done.")
 
 
 def write_to_json_file(data_to_write, output_file_path):
@@ -148,9 +230,15 @@ def json_to_dict(json_input):
 
 def parse_and_check_input():
 
-  parser = argparse.ArgumentParser(description='Output CSV file with Robinhood position information.')
-  parser.add_argument('csv_output_file_path')
+  parser = argparse.ArgumentParser(description='Output CSV file(s) with Robinhood position and/or dividend information.')
+  parser.add_argument('--stock_pos_csv_path', '--sp')
+  parser.add_argument('--stock_div_csv_path', '--sd')
   args = parser.parse_args()
+
+  if (not args.stock_pos_csv_path and not args.stock_div_csv_path):
+    print(f"No output specified.\n")
+    parser.print_help()
+    sys.exit(f"\nExiting.\n")
 
   return args
 
@@ -163,7 +251,11 @@ if __name__ == '__main__':
 
   rh_fetch.login()
 
-  write_stock_positions_to_csv_file(args.csv_output_file_path)
+  if (args.stock_pos_csv_path):
+    write_stock_positions_to_csv_file(args.stock_pos_csv_path)
+  
+  if (args.stock_div_csv_path):
+    write_stock_dividends_to_csv_file(args.stock_div_csv_path)
 
-  print("\nExiting.\n")
+  print("\nDone.\nExiting.\n")
 

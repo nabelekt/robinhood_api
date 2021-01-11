@@ -9,11 +9,13 @@ print = functools.partial(print, flush=True)  # Prevent print statements from bu
 
 
 def login():
+
     totp  = pyotp.TOTP(rh_creds.TOTP_code).now()
     login = robin_stocks.login(rh_creds.username, rh_creds.password, mfa_code=totp)
 
 
 def get_stock_positions_dicts():
+
     print("Getting stock positions from Robinhood. This may take a few minutes... ", end="")
     stock_positions = robin_stocks.account.build_holdings(with_dividends=True)
     print("Done.")
@@ -22,6 +24,7 @@ def get_stock_positions_dicts():
 
 
 def get_crypto_positions_dicts():
+
     print("Getting crypto positions from Robinhood... ", end="")    
     crypto_positions = robin_stocks.crypto.get_crypto_positions()
     print("Done.")
@@ -29,9 +32,21 @@ def get_crypto_positions_dicts():
     return crypto_positions
 
 
+def get_stock_dividends_dicts():
+
+    print("Getting stock dividends from Robinhood... ", end="")
+    stock_dividends = robin_stocks.account.get_dividends()
+    print("Done.")
+
+    print("Getting symbols for dividends from Robinhood. This may take a few miniutes... ", end="")
+    for div_idx, dividend in enumerate(stock_dividends):
+        stock_dividends[div_idx]['symbol'] = robin_stocks.stocks.get_symbol_by_url(stock_dividends[div_idx]['instrument'])
+    print("Done.")
+
+    return stock_dividends
+
+
 def get_stock_orders(symbols):
-    
-    login()
     
     # print_controller = print_control.Controller()
     # print_controller.disable_printing()
@@ -65,8 +80,6 @@ def get_stock_orders(symbols):
 
 def get_all_crypto_orders():
     
-    login()
-
     orders = robin_stocks.orders.get_all_crypto_orders()
 
     return orders
@@ -78,6 +91,10 @@ def get_crypto_orders(symbols=None):
     
     if symbols is None:
         wanted_orders = all_orders
+        # TODO: Do for all orders what we do for wanted orders below
+
+    elif symbols == []:
+        return []
     
     else:
         order_dict = dict((symbol, []) for symbol in symbols)  # Create dictionary with each symbol as a key
@@ -89,7 +106,6 @@ def get_crypto_orders(symbols=None):
                 order_dict[symbol].append(order)  # Append order to dicionary corresponding with symbol
             except KeyError:
                 pass  # Discard orders that don't corespond to one of our tickers
-
 
         # Create list of lists from dictionary
         wanted_orders = list(order_dict.values())
@@ -104,15 +120,11 @@ def get_crypto_order_symbol(currency_pair_id):
 
 def get_crypto_order_info(order_id):
 
-  login()
-
   data = robin_stocks.orders.get_crypto_order_info(id)
 
 
 def get_crypto_positions():
     
-    login()
-
     positions = robin_stocks.crypto.get_crypto_positions()
     
     return positions
