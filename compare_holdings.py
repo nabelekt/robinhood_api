@@ -154,7 +154,7 @@ def parse_and_print_rh_order_data(ticker, order_set):
                             price =  float(execution['price'])
                         else:  # Crypto order data puts price with order data
                             price = float(order['price'])
-                        print(f'{price:9,.3f}', end="  ")
+                        print(f'{price:12,.3f}', end="  ")
                         
                         datetime_str = format_datetime_str(execution['timestamp'])
                         print(datetime_str, end="  ")
@@ -206,18 +206,18 @@ def cleanup_bt_crypto_tickers(bt_crypto_tickers):
 
 def compare_equity(df_bt, df_rh):
 
-    equity_tuples = [(df_rh['type'][ticker], ticker, df_rh['name'][ticker], df_bt['equity'][ticker], df_rh['equity'][ticker],
-                         df_bt['quote'][ticker], df_rh['quote'][ticker]) for ticker in df_rh.index.tolist()]
-    df = pd.DataFrame(equity_tuples, columns=['type', 'ticker', 'name', 'bt_equity', 'rh_equity', 'bt_quote', 'rh_quote'])
+    equity_tuples = [(df_rh['type'][ticker], ticker, df_rh['name'][ticker], df_bt['quantity'][ticker], 
+        df_rh['quantity'][ticker], df_bt['quote'][ticker], df_rh['quote'][ticker], df_bt['equity'][ticker], df_rh['equity'][ticker]) for ticker in df_rh.index.tolist()]
+    df = pd.DataFrame(equity_tuples, columns=['type', 'ticker', 'name', 'bt_quantity', 'rh_quantity', 'bt_price', 'rh_price', 'bt_equity', 'rh_equity'])
 
     df['equity_difference'] = df['bt_equity'] - df['rh_equity']
 
     df = df.reindex(df.equity_difference.abs().sort_values(ascending=False).index)  # Sort by absolute value
     df = df[df.equity_difference.abs() > 0]  # Get rid of rows with no difference
 
-    print("Equity differences may be due to after-hours trading. Robinhood prices may be udpated through after-hours "
-          "trading while Banktivity prices may only be updated through market close. 'rh_quote' below, however, may "
-          "only be updated through market close.")
+    print("Equity differences may be due to after-hours trading. Robinhood prices may be updated through after-hours, "
+          "trading while Banktivity prices may only be updated through market close. 'rh_price' below, however, may "
+          "only be updated through market close while 'rh_equity' will be current.")
     print("Equity differences:\n")
     print(df.to_string(index=False))
 
