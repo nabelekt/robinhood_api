@@ -18,8 +18,10 @@ def process_stock_positions_data(stock_positions_dicts, get_quotes=False):
   
     df = pd.DataFrame(stock_positions_dicts, index=None)
     df = df.transpose()
-    
-    df['type']  = 'stock'
+
+    # Preserve 'type' value returned, but set new 'type' column to 'stock' for comparision in compare_holdings.py
+    df['sec_type']  = df['type']
+    df['type']      = 'stock'
     
     if get_quotes:
         print("\nGetting stock quotes from Robinhood. This may take a few minutes... ", end="")
@@ -139,10 +141,11 @@ def prep_stock_positions_df_for_compare(df):
 
 def prep_stock_positions_df_for_output(df):
 
-    columns_to_keep_in_order = ['name', 'quantity', 'equity', 'quote', 'percentage']
+    columns_to_keep_in_order = ['name', 'sec_type', 'quantity', 'equity', 'quote', 'percentage']
 
-    df.drop(df.columns.difference(columns_to_keep_in_order), 1, inplace=True)  # Drop unwanted columns
+    df.drop(df.columns.difference(columns_to_keep_in_order), 1, inplace=True)  # Drop unwanted columns, this is necessary to avoid SettingWithCopyWarning in next line
     df = df[columns_to_keep_in_order]  # Rearrange columns
+
     df['percentage'] = df['percentage'].astype(float)  # Convert string values to float values
     df = sort_by(df, 'percentage', ascending=False)
     df['equity'] = df['equity'].replace(r'[\$,]', '', regex=True).astype(float)  # Convert currency strings to float values
@@ -154,8 +157,9 @@ def prep_stock_dividends_df_for_output(df):
 
     columns_to_keep_in_order = ['paid_at', 'record_date', 'symbol', 'amount', 'position', 'rate', 'withholding', 'drip_enabled', 'nra_withholding']
 
-    df.drop(df.columns.difference(columns_to_keep_in_order), 1, inplace=True)  # Drop unwanted columns
+    df.drop(df.columns.difference(columns_to_keep_in_order), 1, inplace=True)  # Drop unwanted columns, this is necessary to avoid SettingWithCopyWarning in next line
     df = df[columns_to_keep_in_order]  # Rearrange columns
+
 
     return df
 
@@ -189,7 +193,7 @@ def write_stock_positions_to_csv_file(output_file_path):
     stock_positions_df = prep_stock_positions_df_for_output(stock_positions_df)
 
     print(f"Writing to {output_file_path} file... ", end="")
-    stock_positions_df.to_csv(output_file_path, index=False)
+    stock_positions_df.to_csv(output_file_path, index=True)  # Index is the ticker symbol, include it in output
     print("Done.")
 
 
@@ -243,7 +247,7 @@ def parse_and_check_input():
   return args
 
 
-if __name__ == '__main__':
+def main():
 
   print()
 
@@ -256,6 +260,11 @@ if __name__ == '__main__':
   
   if (args.stock_div_csv_path):
     write_stock_dividends_to_csv_file(args.stock_div_csv_path)
+
+
+if __name__ == '__main__':
+  
+  main()
 
   print("\nDone.\nExiting.\n")
 

@@ -246,6 +246,9 @@ def main():
     pd.set_option('display.max_columns', None)
     pd.set_option('display.max_rows', None)
 
+    # Do setup tasks
+    rh_fetch.setup()
+
     # Login to Robinhood
     rh_fetch.login()
 
@@ -285,7 +288,7 @@ def main():
 
     tickers_missing_from_rh = missing_from_rh_df.index.tolist()
 
-    print("\n----------------------------------------------------------------------\n")
+    print("\n--------------------------------------------------------------------------------\n")
 
     # Process and display data missing from Banktivity
     if tickers_missing_from_bt:
@@ -314,7 +317,7 @@ def main():
         print("No Robinhood data is missing from Banktivity.")
 
 
-    print("\n----------------------------------------------------------------------\n")
+    print("\n--------------------------------------------------------------------------------\n")
 
     # Process and display data missing from Robinhood
     if tickers_missing_from_rh:
@@ -326,9 +329,15 @@ def main():
     else:
         print("No Banktivity data is missing from Robinhood.")
 
-    print("\n----------------------------------------------------------------------\n")
+    print("\n--------------------------------------------------------------------------------\n")
 
     if args.compare_equity:
+
+        # Remove missing tickers from dfs before comparing equity
+        if tickers_missing_from_rh:
+            df_bt.drop(tickers_missing_from_rh, inplace=True)
+        if tickers_missing_from_bt:
+            df_rh.drop(tickers_missing_from_bt, inplace=True)
 
         equity_diff_df = compare_equity(df_bt, df_rh)
         [equity_diff_tickers_stock, equity_diff_tickers_crypto] = get_equity_diff_tickers(equity_diff_df, args.equity_diff)
@@ -349,7 +358,7 @@ def main():
         else:
             print(f"\nNo securities have equity differences greater than or equal to ${args.equity_diff}.")
 
-        print("\n----------------------------------------------------------------------\n")
+        print("\n--------------------------------------------------------------------------------\n")
 
 
 if __name__ == "__main__":

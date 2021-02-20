@@ -1,11 +1,15 @@
-
-
+import os
 import pyotp
 import robin_stocks
 import json
 import robinhood_creds as rh_creds
 import functools
 print = functools.partial(print, flush=True)  # Prevent print statements from buffering till end of execution
+
+
+def setup():
+    # Disable printing from robin_stocks module
+    robin_stocks.helper.set_output(open(os.devnull,"w"))
 
 
 def login():
