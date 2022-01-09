@@ -6,7 +6,6 @@ import io
 import robin_stocks
 import pyotp
 from datetime import datetime as dt
-import dateutil.parser
 import json
 import print_control
 from contextlib import redirect_stdout
@@ -98,22 +97,18 @@ def compare_holdings_data(df_rh, df_bt):
     return [missing_from_rh, missing_from_bt]
 
 
-def format_datetime_str(order_dt_str):
-    
-    order_dt     = dateutil.parser.isoparse(order_dt_str)
-    order_dt_str = order_dt.strftime('%Y-%m-%d %H:%M:%S %Z')
-
-    return order_dt_str
-
-
 def parse_and_print_rh_order_data(ticker, order_set):
+    # TODO: Some of this can probably now be replaced with:
+    #    stock_orders_dicts = rh_fetch.get_stock_orders(tickers)
+    #    stock_orders_df = process_stock_order_data(stock_positions_dicts)
     
     if order_set == []:
         print(f'  {ticker:7s}', end="  ")
         now = int(time.time())
         five_years_ago = int(now - (5*365.25*24*60*60))
         print(f"No Robinhood order data for '{ticker}'. This may be due to a merger, stock split, etc. See 5 year history at " \
-              f"https://finance.yahoo.com/quote/{ticker}/history?period1={five_years_ago}&period2={now}")
+              f"https://finance.yahoo.com/quote/{ticker}/history?period1={five_years_ago}&period2={now}" \
+              f"\nSearching https://sec.report/Ticker/ may also be helpful.")
         return False
     
     else:
@@ -156,7 +151,7 @@ def parse_and_print_rh_order_data(ticker, order_set):
                             price = float(order['price'])
                         print(f'{price:12,.3f}', end="  ")
                         
-                        datetime_str = format_datetime_str(execution['timestamp'])
+                        datetime_str = rh_process.format_datetime_str(execution['timestamp'])
                         print(datetime_str, end="  ")
                         
                         print(num_executions, end="  ")

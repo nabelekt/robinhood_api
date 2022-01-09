@@ -1,3 +1,4 @@
+import sys
 import os
 import pyotp
 import robin_stocks
@@ -72,7 +73,10 @@ def get_stock_orders(symbols):
     orders = []
 
     for symbol in symbols:
-        order_set = robin_stocks.orders.find_stock_orders(symbol=symbol)
+        try:
+            order_set = robin_stocks.orders.find_stock_orders(symbol=symbol)
+        except IndexError as e:
+            sys.exit(f"\nERROR: IndexError encountered. Make sure that all symbols are valid.\n\nExiting.\n")
         for order in order_set:
             order['symbol'] = symbol
         orders.append(order_set)

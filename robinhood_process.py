@@ -9,9 +9,89 @@ import pandas as pd
 import functools
 print = functools.partial(print, flush=True)  # Prevent print statements from buffering till end of execution
 import argparse
+import dateutil.parser
 
 # Local modules and files:
 import robinhood_fetch as rh_fetch
+
+
+def format_datetime_str(order_dt_str):
+    
+    order_dt     = dateutil.parser.isoparse(order_dt_str)
+    order_dt_str = order_dt.strftime('%Y-%m-%d %H:%M:%S %Z')
+
+    return order_dt_str
+
+
+def process_stock_order_data(stock_orders_dicts):
+
+    order_df = pd.DataFrame(columns=['ticker', 'datetime', 'side', 'type', 'exeuction number', 'num_executions', 'quantity', 'price', 'amount', 'fees/commission'])
+
+    for order_set in stock_orders_dicts:
+        for order in order_set:
+            
+            ticker = order['symbol']
+            num_executions = len(order['executions'])
+            order_type = order['type']
+            side = order['side']
+            
+            for execution_idx, execution in enumerate(order['executions']):
+                try:
+                    if order['state'] == 'filled':  # Exclude canceled and failed orders
+                        
+                        quantity = float(execution['quantity'])
+
+                        if 'price' in execution:  # Stock order data puts price data in each execution
+                            price =  float(execution['price'])
+                        else:  # Crypto order data puts price with order data
+                            price = float(order['price'])
+
+                        if num_executions > 1 and execution['rounded_notional'] is not None:  # Stock orders with more than one execution uses 'rounded_notional', separate for each execution
+                            amount = float(execution['rounded_notional'])
+                        elif num_executions > 1 and execution['rounded_notional'] is None:  # Stock stock orders with more than one execution have None as the rounded_notional
+                            amount = float(execution['price']) * float(execution['quantity'])
+                        elif num_executions == 1 and 'executed_notional' in order:  # Stock orders with only one execution use 'executed_notional'['amount']
+                            amount = float(order['executed_notional']['amount'])
+                        else:  # Crypto order data uses 'rounded_executed_notional'
+                            amount = float(order['rounded_executed_notional'])
+
+                        datetime_str = format_datetime_str(execution['timestamp'])
+
+                        if execution_idx == 0:  # Only apply fees/commission to the first execution
+                            fees = float(order['fees'])
+                        else:
+                            fees = 0
+
+                        amount = amount - fees  # Take fees off the amount so that commission/fees will be recognized by Banktivity
+                    
+                        # Treat all executions together as a single transaction
+                        # quantity = float(order['cumulative_quantity'])
+
+                        # if 'average_price' in order:
+                        #     price =  float(order['average_price'])
+                        # else:
+                        #     price = float(order['price'])
+
+                        # if 'executed_notional' in order:  # Stock orders use 'executed_notional'['amount']
+                        #     amount = float(order['executed_notional']['amount'])
+                        # else:  # Crypto order data uses 'rounded_executed_notional'
+                        #     amount = float(order['rounded_executed_notional'])
+                        
+                        # datetime_str = format_datetime_str(order['updated_at'])
+
+                        # fees = float(order['fees'])
+
+
+                        # Append items to dataframe
+                        order_df.loc[len(order_df)] = [ticker, datetime_str, side, order_type, execution_idx+1, num_executions, quantity, price, amount, fees]
+
+                except:
+                    print(order)
+                    raise
+                    sys.exit()
+
+
+    return order_df
 
 
 def process_stock_positions_data(stock_positions_dicts, get_quotes=False):
@@ -105,7 +185,7 @@ def process_stock_dividends_data(stock_dividends_dicts):
   
     df = pd.DataFrame(stock_dividends_dicts, index=None)
 
-    df = sort_by(df, 'paid_at')
+    df = sort_by(df, ['record_date', 'paid_at'])
 
     return df
 
@@ -139,6 +219,13 @@ def prep_stock_positions_df_for_compare(df):
     return df
 
 
+def prep_stock_order_df_for_output(df):
+    
+    df = sort_by(df, 'datetime')
+
+    return df
+
+
 def prep_stock_positions_df_for_output(df):
 
     columns_to_keep_in_order = ['name', 'sec_type', 'quantity', 'equity', 'quote', 'percentage']
@@ -164,12 +251,12 @@ def prep_stock_dividends_df_for_output(df):
     return df
 
 
-def sort_by(df, column_label, ascending=True):
+def sort_by(df, column_labels, ascending=True):
     
     if ascending:
-        df = df.sort_values(column_label, inplace=False, ascending=True)
+        df = df.sort_values(by=column_labels, inplace=False, ascending=True)
     else:
-        df = df.sort_values(column_label, inplace=False, ascending=False)
+        df = df.sort_values(by=column_labels, inplace=False, ascending=False)
     
     return df
 
@@ -186,13 +273,51 @@ def write_crypto_positions_to_json_file(output_file_path):
     write_to_json_file(crypto_positions, output_file_path)
 
 
+def write_stock_orders_to_csv_file(output_file_path, tickers):
+
+    stock_orders_dicts = rh_fetch.get_stock_orders(tickers)
+    stock_orders_df = process_stock_order_data(stock_orders_dicts)
+    stock_orders_df = prep_stock_order_df_for_output(stock_orders_df)
+
+    print(f"\nWriting CSV output to {output_file_path} file... ", end="")
+    stock_orders_df.to_csv(output_file_path, index=False)
+    print("Done.")
+
+
+def write_stock_orders_to_qif_file(output_file_path, tickers):
+
+    stock_orders_dicts = rh_fetch.get_stock_orders(tickers)
+    stock_orders_df = process_stock_order_data(stock_orders_dicts)
+    stock_orders_df = prep_stock_order_df_for_output(stock_orders_df)
+
+    print(f"\nWriting QIF output to {output_file_path} file... ", end="")
+    # See https://www.w3.org/2000/10/swap/pim/qif-doc/QIF-doc.htm for QIF format
+    with open(output_file_path, 'w') as qif_file:
+        qif_file.write("!Account\nNRobinhood\nTInvst\n^\n")
+        for index, order in stock_orders_df.iterrows():
+            qif_file.write(f"!Type:Invst\n"
+                            f"D{order['datetime']}\n"
+                            f"N{order['side']}\n"
+                            f"Y{order['ticker']}\n"
+                            f"I{order['price']}\n"
+                            f"Q{order['quantity']}\n"
+                            f"T{order['amount']}\n"
+                            f"O-{order['fees/commission']}\n"
+                            f"Cc\n"  # Cleared status (?)
+                            f"P{order['ticker']} {order['side']}\n"  # Ex: PAAPL Buy
+                            f"M{order['ticker']} {order['side']}\n"  # Ex: MAAPL Buy
+                            f"^\n")
+        qif_file.write("^")
+    print("Done.")
+
+
 def write_stock_positions_to_csv_file(output_file_path):
 
     stock_positions_dicts = rh_fetch.get_stock_positions_dicts()
     stock_positions_df = process_stock_positions_data(stock_positions_dicts)
     stock_positions_df = prep_stock_positions_df_for_output(stock_positions_df)
 
-    print(f"Writing to {output_file_path} file... ", end="")
+    print(f"Writing CSV output to {output_file_path} file... ", end="")
     stock_positions_df.to_csv(output_file_path, index=True)  # Index is the ticker symbol, include it in output
     print("Done.")
 
@@ -203,7 +328,7 @@ def write_stock_dividends_to_csv_file(output_file_path):
     stock_dividends_df = process_stock_dividends_data(stock_dividends_dicts)
     stock_dividends_df = prep_stock_dividends_df_for_output(stock_dividends_df)
 
-    print(f"Writing to {output_file_path} file... ", end="")
+    print(f"Writing CSV output to {output_file_path} file... ", end="")
     stock_dividends_df.to_csv(output_file_path, index=False)
     print("Done.")
 
@@ -234,13 +359,21 @@ def json_to_dict(json_input):
 
 def parse_and_check_input():
 
-  parser = argparse.ArgumentParser(description='Output CSV file(s) with Robinhood position and/or dividend information.')
-  parser.add_argument('--stock_pos_csv_path', '--sp')
-  parser.add_argument('--stock_div_csv_path', '--sd')
+  parser = argparse.ArgumentParser(description='Output CSV file(s) with Robinhood order, position, or dividend information.')
+  parser.add_argument('--stock_ord_csv_path', '-so')
+  parser.add_argument('--stock_ord_qif_path', '-so_qif')
+  parser.add_argument('--stock_pos_csv_path', '-sp')
+  parser.add_argument('--stock_div_csv_path', '-sd')
+  parser.add_argument('--tickers', '-t', nargs='+', help='Space-separated list of tickers to get stock order data for. Only used when stock_ord_csv_path is specified.')
   args = parser.parse_args()
 
-  if (not args.stock_pos_csv_path and not args.stock_div_csv_path):
+  if (not args.stock_ord_csv_path and not args.stock_ord_qif_path and not args.stock_pos_csv_path and not args.stock_div_csv_path):
     print(f"No output specified.\n")
+    parser.print_help()
+    sys.exit(f"\nExiting.\n")
+
+  if (args.stock_ord_csv_path and not args.tickers) and (args.stock_ord_qif_path and not args.tickers):
+    print(f"No tickers specified.\n")
     parser.print_help()
     sys.exit(f"\nExiting.\n")
 
@@ -254,6 +387,12 @@ def main():
   args = parse_and_check_input()
 
   rh_fetch.login()
+
+  if (args.stock_ord_csv_path):
+    write_stock_orders_to_csv_file(args.stock_ord_csv_path, args.tickers)
+
+  if (args.stock_ord_qif_path):
+    write_stock_orders_to_qif_file(args.stock_ord_qif_path, args.tickers)
 
   if (args.stock_pos_csv_path):
     write_stock_positions_to_csv_file(args.stock_pos_csv_path)
