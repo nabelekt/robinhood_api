@@ -359,7 +359,7 @@ def json_to_dict(json_input):
 
 def parse_and_check_input():
 
-  parser = argparse.ArgumentParser(description='Output CSV file(s) with Robinhood order, position, or dividend information.')
+  parser = argparse.ArgumentParser(description='Output CSV file(s) with Robinhood order, position, or dividend information, or QIF files with order information.')
   parser.add_argument('--stock_ord_csv_path', '-so')
   parser.add_argument('--stock_ord_qif_path', '-so_qif')
   parser.add_argument('--stock_pos_csv_path', '-sp')
